@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="mr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>अग्गोबाई ढग्गोबाई</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fff7e6;--fg:#2b2a33;--muted:#6b6878;--accent:#ff7a3d;--panel:#ffffff;--shadow:rgba(60,40,10,.18)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16161d;--fg:#f1eee8;--muted:#a9a6b3;--panel:#23232d;--shadow:rgba(0,0,0,.5)}}
+:root[data-theme="dark"]{--bg:#16161d;--fg:#f1eee8;--muted:#a9a6b3;--panel:#23232d;--shadow:rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'Baloo 2',system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px 16px}
+h1{font-size:clamp(24px,5vw,40px);margin:0 0 4px;font-weight:800;color:var(--accent)}
+p.sub{margin:0 0 16px;color:var(--muted)}
+.stage{width:100%;max-width:1100px;aspect-ratio:16/9;position:relative;border-radius:18px;overflow:hidden;box-shadow:0 12px 40px var(--shadow);background:#8fd3ff}
+svg{width:100%;height:100%;display:block}
+.play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.25);border:0;cursor:pointer;font:inherit}
+.play span{background:#ff7a3d;color:#fff;font-size:clamp(18px,3.5vw,32px);font-weight:800;padding:.5em 1.2em;border-radius:999px;box-shadow:0 6px 0 #c4501e}
+.controls{display:flex;gap:10px;align-items:center;margin-top:14px;width:100%;max-width:1100px}
+.controls button{font:inherit;font-weight:700;border:0;border-radius:999px;padding:6px 16px;background:var(--accent);color:#fff;cursor:pointer}
+.bar{flex:1;height:8px;border-radius:4px;background:var(--panel);overflow:hidden;box-shadow:inset 0 0 0 1px var(--shadow)}
+.bar i{display:block;height:100%;width:0;background:var(--accent)}
+.time{font-variant-numeric:tabular-nums;color:var(--muted);min-width:4.5em;text-align:right}
+body.capture{padding:0;background:#000}
+body.capture h1,body.capture p.sub,body.capture .controls,body.capture .play{display:none}
+body.capture .stage{width:1280px;height:720px;max-width:none;border-radius:0;box-shadow:none}
+</style>
+</head>
+<body>
+<h1>अग्गोबाई ढग्गोबाई</h1>
+<p class="sub">मुलांसाठी ॲनिमेटेड बालगीत</p>
+<div class="stage">
+  <svg id="svg" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg"></svg>
+  <button class="play" id="play" aria-label="Play"><span>▶ गाणं सुरू करा</span></button>
+</div>
+<div class="controls">
+  <button id="replay">↺ पुन्हा</button>
+  <div class="bar"><i id="prog"></i></div>
+  <span class="time" id="time">0:00</span>
+</div>
+<script src="song.js"></script>
+<script>
+// ---------- Timeline ----------
+const BEAT = 60 / SONG.bpm, LINE = 8 * BEAT, INTRO = SONG.intro_beats * BEAT;
+const LINES = SONG.lines;
+const OUTRO = INTRO + LINES.length * LINE;   // 52
+const DUR = OUTRO + 6;                        // 58
+
+// ---------- Small helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, p) => a + (b - a) * p;
+const pulse = t => Math.exp(-(((t / BEAT) % 1 + 1) % 1) * 5);
+const back = p => { p = clamp(p); const c = 1.7; return 1 + (c + 1) * (p - 1) ** 3 + c * (p - 1) ** 2; };
+const pop = (x, len = .3) => x < 0 ? 0 : back(x / len);
+const $ = id => document.getElementById(id);
+const S = (id, k, v) => { const e = $(id); if (e) e.setAttribute(k, v); };
+const T = (id, v) => S(id, 'transform', v);
+
+// cloud blob centred on 0,0
+const puff = (w, h, fill, stroke = 'none') => `<g fill="${fill}" stroke="${stroke}" stroke-width="6">
+  <ellipse cx="0" cy="${h * .18}" rx="${w / 2}" ry="${h * .32}"/>
+  <circle cx="${-w * .24}" cy="${-h * .02}" r="${h * .34}"/>
+  <circle cx="${w * .04}" cy="${-h * .14}" r="${h * .46}"/>
+  <circle cx="${w * .28}" cy="${h * .02}" r="${h * .32}"/></g>`;
+const eye = (x, y, r = 14) => `<g transform="translate(${x},${y})"><ellipse rx="${r}" ry="${r * 1.2}" fill="#fff" stroke="#2b2a33" stroke-width="3"/><circle cx="2" cy="3" r="${r * .5}" fill="#2b2a33"/><circle cx="5" cy="-1" r="${r * .18}" fill="#fff"/></g>`;
+const txt = (id, x, y, s, size, fill, extra = '') => `<text id="${id}" x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="middle" font-family="'Baloo 2',sans-serif" font-weight="800" stroke="#fff" stroke-width="${size / 8}" paint-order="stroke" ${extra}>${s}</text>`;
+const star = (r) => { let d = ''; for (let i = 0; i < 10; i++) { const a = Math.PI / 5 * i - Math.PI / 2, rr = i % 2 ? r * .45 : r; d += (i ? 'L' : 'M') + (Math.cos(a) * rr).toFixed(1) + ' ' + (Math.sin(a) * rr).toFixed(1); } return d + 'Z'; };
+
+// ---------- Scenes (SVG) ----------
+const svg = $('svg');
+let html = `<defs>
+  <linearGradient id="gIntro" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ec8ff"/><stop offset="1" stop-color="#c9f0ff"/></linearGradient>
+  <linearGradient id="gHot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#fff1b8"/></linearGradient>
+  <linearGradient id="gRain" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6f86a8"/><stop offset="1" stop-color="#b9c9de"/></linearGradient>
+  <linearGradient id="gWind" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7fd8d0"/><stop offset="1" stop-color="#d6f7ef"/></linearGradient>
+  <linearGradient id="gNight" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#141a46"/><stop offset="1" stop-color="#3b3f86"/></linearGradient>
+  <linearGradient id="gFresh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ad7ff"/><stop offset="1" stop-color="#e3fbff"/></linearGradient>
+  <linearGradient id="gEarth" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a5a33"/><stop offset="1" stop-color="#4e2f18"/></linearGradient>
+  <radialGradient id="gGlow"><stop offset="0" stop-color="#9ff6ff"/><stop offset="1" stop-color="#1b6f8a"/></radialGradient>
+</defs>`;
+
+// Intro
+html += `<g id="s0">
+  <rect width="1280" height="720" fill="url(#gIntro)"/>
+  <g transform="translate(1100,130)"><g id="i_rays">${Array.from({length: 12}, (_, i) => `<rect x="-6" y="-120" width="12" height="40" rx="6" fill="#ffc83d" transform="rotate(${i * 30})"/>`).join('')}</g><circle r="70" fill="#ffd84d" stroke="#f5a623" stroke-width="6"/>
+    <circle cx="-22" cy="-8" r="7" fill="#2b2a33"/><circle cx="22" cy="-8" r="7" fill="#2b2a33"/><path d="M-25 18 Q0 42 25 18" stroke="#2b2a33" stroke-width="6" fill="none" stroke-linecap="round"/></g>
+  <g id="i_c1">${puff(260, 130, '#fff')}</g><g id="i_c2">${puff(200, 100, '#fff')}</g><g id="i_c3">${puff(300, 150, '#fff')}</g>
+  <path d="M0 600 Q200 520 420 590 T860 580 T1280 570 V720 H0Z" fill="#6cc96a"/><path d="M0 650 Q300 600 640 650 T1280 640 V720 H0Z" fill="#4fae55"/>
+  <g id="i_title">
+    <g id="i_w1">${txt('', 0, 0, 'अग्गोबाई', 120, '#ff6b35', 'stroke-width="14"')}</g>
+    <g id="i_w2">${txt('', 0, 0, 'ढग्गोबाई', 120, '#3d7bff', 'stroke-width="14"')}</g>
+  </g>
+  <g id="i_sub">${txt('', 640, 470, 'एक मजेदार पावसाचं गाणं', 44, '#2b2a33')}</g>
+</g>`;
+
+// Scene 1 — cloud feels the sun's heat
+html += `<g id="s1">
+  <rect width="1280" height="720" fill="url(#gHot)"/>
+  <g transform="translate(1060,150)"><g id="a_rays">${Array.from({length: 14}, (_, i) => `<path d="M-14 -105 L0 -160 L14 -105Z" fill="#ff8c1a" transform="rotate(${i * 360 / 14})"/>`).join('')}</g>
+    <g id="a_sun"><circle r="95" fill="#ffcf2e" stroke="#ff8c1a" stroke-width="8"/>
+    <rect x="-62" y="-30" width="54" height="30" rx="12" fill="#2b2a33"/><rect x="8" y="-30" width="54" height="30" rx="12" fill="#2b2a33"/><rect x="-10" y="-22" width="20" height="6" fill="#2b2a33"/>
+    <path d="M-30 35 Q5 60 40 30" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round"/></g></g>
+  <g id="a_heat" stroke="#ff5722" stroke-width="7" fill="none" stroke-linecap="round" stroke-dasharray="26 22" opacity=".7">
+    <path d="M960 190 Q900 150 840 200 T720 230"/><path d="M970 240 Q900 220 850 260 T740 300"/><path d="M990 280 Q920 290 870 320 T760 360"/></g>
+  <path d="M0 610 Q320 560 640 610 T1280 600 V720 H0Z" fill="#e3b04b"/><path d="M0 660 Q400 630 800 665 T1280 650 V720H0Z" fill="#c98f2e"/>
+  <g id="a_cloud">${puff(380, 220, '#fff', '#e8e2d8')}
+    <ellipse id="a_ch1" cx="-95" cy="30" rx="30" ry="16" fill="#ff6b6b" opacity=".4"/><ellipse id="a_ch2" cx="95" cy="30" rx="30" ry="16" fill="#ff6b6b" opacity=".4"/>
+    <path d="M-80 -20 L-50 -5 L-80 10" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M80 -20 L50 -5 L80 10" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <ellipse id="a_mouth" cx="0" cy="45" rx="20" ry="24" fill="#7a2335"/>
+    ${[0, 1, 2].map(i => `<path id="a_sw${i}" d="M0 -12 Q9 4 0 10 Q-9 4 0 -12Z" fill="#5bc0ff"/>`).join('')}
+  </g>
+  <g id="a_bub"><path d="M-110 -50 H110 Q130 -50 130 -30 V20 Q130 40 110 40 H-20 L-50 75 L-45 40 H-110 Q-130 40 -130 20 V-30 Q-130 -50 -110 -50Z" fill="#fff" stroke="#2b2a33" stroke-width="5"/>${txt('', 0, 12, 'आई गं!', 54, '#e63946', 'stroke-width="0"')}</g>
+</g>`;
+
+// Scene 2 — mountain cries a waterfall
+html += `<g id="s2">
+  <rect width="1280" height="720" fill="url(#gRain)"/>
+  <path d="M-50 560 L230 300 L480 560Z" fill="#6f9e6a"/><path d="M820 560 L1080 280 L1340 560Z" fill="#6f9e6a"/>
+  <g id="b_mtn"><path d="M300 600 L620 150 Q640 125 660 150 L980 600Z" fill="#7bb26f" stroke="#4d7f45" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M565 230 L620 150 Q640 125 660 150 L715 230 Q690 215 670 240 Q645 215 620 240 Q595 215 565 230Z" fill="#fff"/>
+    <path d="M565 300 Q590 285 612 305" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round"/><path d="M668 305 Q690 285 715 300" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <g id="b_eyes">${eye(590, 335, 20)}${eye(690, 335, 20)}</g>
+    <path d="M610 430 Q640 405 670 430" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <g id="b_tears" stroke="#4fc3ff" stroke-linecap="round" fill="none" stroke-dasharray="22 12"><path id="b_t1" d="M585 365 Q560 470 520 620"/><path id="b_t2" d="M695 365 Q720 470 760 620"/></g></g>
+  <rect y="590" width="1280" height="130" fill="#3fa9f5"/>
+  <g id="b_rip" fill="none" stroke="#bfe8ff" stroke-width="4">${[0, 1, 2, 3].map(i => `<ellipse id="b_r${i}" cx="${[520, 760, 300, 1000][i]}" cy="${[630, 630, 670, 680][i]}" rx="40" ry="10"/>`).join('')}</g>
+  <g id="b_c1">${puff(320, 140, '#8f9db3')}</g><g id="b_c2">${puff(280, 120, '#a3b0c4')}</g>
+</g>`;
+
+// Scene 3 — whirling wind and the drum cloud
+html += `<g id="s3">
+  <rect width="1280" height="720" fill="url(#gWind)"/>
+  <path d="M0 600 Q320 560 640 600 T1280 590 V720 H0Z" fill="#59b85e"/>
+  ${[0, 1, 2].map(i => `<g id="c_tree${i}" transform="translate(${[160, 1040, 1180][i]},610)"><rect x="-12" y="-110" width="24" height="110" fill="#7a4b2a"/><g id="c_top${i}"><circle cy="-140" r="60" fill="#3e9e48"/><circle cx="-40" cy="-110" r="40" fill="#46ad50"/><circle cx="40" cy="-110" r="40" fill="#46ad50"/></g></g>`).join('')}
+  ${[0, 1, 2].map(i => `<g id="c_sw${i}"><path d="M0 0 m-60 0 a60 60 0 1 1 120 0 a48 48 0 1 1 -96 0 a36 36 0 1 1 72 0 a24 24 0 1 1 -48 0" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" opacity=".85"/></g>`).join('')}
+  <g id="c_cloud">${puff(400, 220, '#f2f6ff', '#c9d6ee')}
+    ${eye(-60, -15, 18)}${eye(60, -15, 18)}
+    <g id="c_blow"><circle cx="-130" cy="40" r="26" fill="#ffb3c1"/><circle cx="0" cy="55" r="16" fill="#7a2335"/></g>
+    <g id="c_smile"><path d="M-45 40 Q0 85 45 40" stroke="#2b2a33" stroke-width="8" fill="#7a2335" stroke-linejoin="round"/></g>
+  </g>
+  <g id="c_drum" transform="translate(640,500)"><ellipse cy="60" rx="110" ry="30" fill="#b3261e"/><rect x="-110" y="0" width="220" height="60" fill="#e63946"/>
+    <path d="M-110 0 L-70 60 L-30 0 L10 60 L50 0 L90 60 L110 20" stroke="#ffd166" stroke-width="7" fill="none"/>
+    <ellipse rx="110" ry="30" fill="#ffe9c7" stroke="#b3261e" stroke-width="6"/>
+    <g id="c_st1"><rect x="-6" y="-120" width="12" height="120" rx="6" fill="#8d5524"/><circle cy="-120" r="14" fill="#ffd166"/></g>
+    <g id="c_st2"><rect x="-6" y="-120" width="12" height="120" rx="6" fill="#8d5524"/><circle cy="-120" r="14" fill="#ffd166"/></g></g>
+  ${[0, 1, 2].map(i => `<g id="c_dhum${i}">${txt('', 0, 0, 'ढुम!', 76, ['#e63946', '#ff8c1a', '#3d7bff'][i])}</g>`).join('')}
+  <g id="c_soo">${txt('', 0, 0, 'सूऽऽम्‌', 64, '#2a7fb8')}</g>
+</g>`;
+
+// Scene 4 — proud lightning lady
+const bolts = ['M200 0 L160 140 L220 140 L150 330', 'M1050 0 L1100 120 L1040 130 L1120 300', 'M640 0 L600 90 L660 100 L590 230'];
+html += `<g id="s4">
+  <rect width="1280" height="720" fill="url(#gNight)"/>
+  ${Array.from({length: 26}, (_, i) => `<path id="d_star${i}" d="${star(6 + (i % 3) * 3)}" fill="#fff6b0" transform="translate(${(i * 397) % 1280},${(i * 151) % 380 + 20})"/>`).join('')}
+  <g id="d_bolts" fill="none" stroke="#fff35c" stroke-width="12" stroke-linejoin="round" stroke-linecap="round">${bolts.map((d, i) => `<path id="d_b${i}" d="${d}"/>`).join('')}</g>
+  <path d="M0 620 Q320 580 640 620 T1280 610 V720 H0Z" fill="#232857"/>
+  ${puff(300, 120, '#4a4f8f').replace('<g', '<g transform="translate(220,140)"')}${puff(260, 110, '#4a4f8f').replace('<g', '<g transform="translate(1030,170)"')}
+  <g id="d_lady">
+    <path d="M0 -70 L-90 150 L90 150Z" fill="#ffd60a" stroke="#f4a100" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M-60 80 L-20 40 L0 80 L20 40 L60 80" stroke="#f4a100" stroke-width="7" fill="none" stroke-linejoin="round"/>
+    <path d="M-35 -40 L-80 10 L-40 40" stroke="#ffd60a" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <g id="d_arm"><path d="M35 -40 L90 -20 L120 -70" stroke="#ffd60a" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path id="d_wand" d="M120 -70 L150 -150 L130 -150 L170 -240" stroke="#fff35c" stroke-width="10" fill="none" stroke-linejoin="round" stroke-linecap="round"/></g>
+    <rect x="-45" y="150" width="14" height="50" rx="7" fill="#f4a100"/><rect x="31" y="150" width="14" height="50" rx="7" fill="#f4a100"/>
+    <g id="d_head"><circle cy="-120" r="62" fill="#fff3b0" stroke="#f4a100" stroke-width="6"/>
+      <path d="M-45 -170 L-35 -215 L-12 -185 L0 -225 L12 -185 L35 -215 L45 -170Z" fill="#ffd60a" stroke="#f4a100" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M-35 -125 Q-22 -135 -10 -125" stroke="#2b2a33" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M10 -125 Q22 -135 35 -125" stroke="#2b2a33" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <path d="M-22 -92 Q0 -78 22 -98" stroke="#2b2a33" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <ellipse cx="-40" cy="-100" rx="12" ry="7" fill="#ff8fab" opacity=".7"/><ellipse cx="40" cy="-100" rx="12" ry="7" fill="#ff8fab" opacity=".7"/></g>
+  </g>
+  ${Array.from({length: 6}, (_, i) => `<path id="d_sp${i}" d="${star(14)}" fill="#fff"/>`).join('')}
+  <g id="d_cham">${txt('', 0, 0, 'चमचम!', 70, '#ffd60a', 'stroke="#141a46"')}</g>
+  <rect id="d_flash" width="1280" height="720" fill="#fff" opacity="0"/>
+</g>`;
+
+// Scene 5 — door in the earth, chatty frogs
+const frog = i => `<g id="e_f${i}"><ellipse cy="10" rx="58" ry="40" fill="#5cc14a" stroke="#2f7d23" stroke-width="5"/>
+  <circle cx="-26" cy="-28" r="20" fill="#5cc14a" stroke="#2f7d23" stroke-width="5"/><circle cx="26" cy="-28" r="20" fill="#5cc14a" stroke="#2f7d23" stroke-width="5"/>
+  <circle cx="-26" cy="-28" r="11" fill="#fff"/><circle cx="26" cy="-28" r="11" fill="#fff"/><circle cx="-24" cy="-26" r="6" fill="#2b2a33"/><circle cx="28" cy="-26" r="6" fill="#2b2a33"/>
+  <ellipse id="e_m${i}" cy="16" rx="30" ry="4" fill="#9b2335"/><ellipse cx="-40" cy="44" rx="22" ry="9" fill="#2f7d23"/><ellipse cx="40" cy="44" rx="22" ry="9" fill="#2f7d23"/></g>`;
+html += `<g id="s5">
+  <rect width="1280" height="720" fill="url(#gFresh)"/>
+  <rect y="420" width="1280" height="300" fill="url(#gEarth)"/><path d="M0 420 Q320 400 640 420 T1280 415 V440 H0Z" fill="#5bb85a"/>
+  ${Array.from({length: 14}, (_, i) => `<ellipse cx="${(i * 211) % 1280}" cy="${480 + (i * 73) % 220}" rx="${10 + i % 4 * 4}" ry="${6 + i % 3 * 2}" fill="#6b4226"/>`).join('')}
+  <ellipse cx="300" cy="432" rx="120" ry="16" fill="#58b8ef"/><ellipse cx="980" cy="432" rx="130" ry="16" fill="#58b8ef"/>
+  <g transform="translate(640,560)"><rect x="-110" y="-95" width="220" height="190" rx="18" fill="#3a220f"/><rect x="-96" y="-82" width="192" height="168" rx="12" fill="url(#gGlow)"/>
+    ${[0, 1, 2].map(i => `<circle id="e_bb${i}" r="${8 + i * 3}" fill="none" stroke="#e6ffff" stroke-width="3"/>`).join('')}
+    <g id="e_dl" transform="translate(-96,0)"><rect y="-82" width="96" height="168" fill="#a0612f" stroke="#5c3415" stroke-width="5"/><circle cx="80" r="8" fill="#ffd166"/></g>
+    <g id="e_dr" transform="translate(96,0)"><rect x="-96" y="-82" width="96" height="168" fill="#a0612f" stroke="#5c3415" stroke-width="5"/><circle cx="-80" r="8" fill="#ffd166"/></g></g>
+  ${[0, 1, 2, 3].map(frog).join('')}
+  ${[0, 1].map(i => `<g id="e_tb${i}"><rect x="-95" y="-40" width="190" height="72" rx="36" fill="#fff" stroke="#2b2a33" stroke-width="4"/>${txt('', 0, 14, i ? 'बडबड!' : 'डराँव!', 44, '#2f7d23', 'stroke-width="0"')}</g>`).join('')}
+</g>`;
+
+// Scene 6 — puddle pond and happy mud
+const kid = (i, shirt, hair) => `<g id="f_k${i}">
+  <path d="M-20 60 L-34 120 M20 60 L34 120" stroke="#8d5524" stroke-width="14" stroke-linecap="round"/>
+  <rect x="-38" y="-20" width="76" height="90" rx="26" fill="${shirt}"/>
+  <path id="f_arm${i}" d="M-34 0 L-80 -50 M34 0 L80 -50" stroke="#c68642" stroke-width="14" stroke-linecap="round"/>
+  <circle cy="-62" r="44" fill="#e0a370"/><path d="M-44 -70 Q-40 -115 0 -110 Q40 -115 44 -70 Q20 -95 -44 -70Z" fill="${hair}"/>
+  <circle cx="-15" cy="-62" r="6" fill="#2b2a33"/><circle cx="15" cy="-62" r="6" fill="#2b2a33"/><path d="M-18 -40 Q0 -22 18 -40Z" fill="#7a2335"/>
+  <g id="f_mud${i}" fill="#6b4226">${[[-20, 30, 10], [15, 5, 8], [22, 50, 12], [-10, -50, 6], [-60, -30, 7], [70, -40, 6], [-28, 100, 9]].map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}"/>`).join('')}</g></g>`;
+html += `<g id="s6">
+  <rect width="1280" height="720" fill="url(#gFresh)"/>
+  <g id="f_rain" fill="none" stroke-width="22">${['#e63946', '#ff8c1a', '#ffd60a', '#52b788', '#3d7bff', '#7b2cbf'].map((c, i) => `<path d="M${140 + i * 22} 560 A${500 - i * 22} ${430 - i * 22} 0 0 1 ${1140 - i * 22} 560" stroke="${c}" pathLength="100" stroke-dasharray="100 100"/>`).join('')}</g>
+  <path d="M0 560 Q320 530 640 560 T1280 555 V720 H0Z" fill="#6cc96a"/>
+  <ellipse cx="640" cy="640" rx="380" ry="60" fill="#7b5230"/><ellipse cx="640" cy="635" rx="340" ry="46" fill="#9a6b42"/><ellipse id="f_shine" cx="560" cy="628" rx="80" ry="10" fill="#c79a6b"/>
+  ${kid(0, '#ff6b6b', '#2b2a33')}${kid(1, '#4d96ff', '#5b3a1e')}
+  ${Array.from({length: 16}, (_, i) => `<circle id="f_sp${i}" r="${7 + i % 3 * 3}" fill="#7b5230"/>`).join('')}
+  <g id="f_soap" transform="translate(1080,300)"><rect x="-70" y="-40" width="140" height="80" rx="22" fill="#ffc8dd" stroke="#e5989b" stroke-width="5"/>${txt('', 0, 12, 'साबण', 34, '#c9184a', 'stroke-width="0"')}
+    <circle cx="60" cy="-60" r="14" fill="none" stroke="#a2d2ff" stroke-width="4"/><circle cx="-50" cy="-62" r="9" fill="none" stroke="#a2d2ff" stroke-width="4"/>
+    <path d="M-85 -70 L85 70 M85 -70 L-85 70" stroke="#e63946" stroke-width="14" stroke-linecap="round"/>${txt('', 0, 125, 'नको!', 54, '#e63946')}</g>
+  <g id="f_chik">${txt('', 0, 0, 'चिखल!', 80, '#7b5230')}</g>
+</g>`;
+
+// Outro
+html += `<g id="s7">
+  <rect width="1280" height="720" fill="url(#gIntro)"/>
+  <g fill="none" stroke-width="26" opacity=".9">${['#e63946', '#ff8c1a', '#ffd60a', '#52b788', '#3d7bff', '#7b2cbf'].map((c, i) => `<path d="M${90 + i * 26} 720 A${550 - i * 26} ${520 - i * 26} 0 0 1 ${1190 - i * 26} 720" stroke="${c}"/>`).join('')}</g>
+  <g id="o_cloud">${puff(260, 140, '#fff')}${eye(-40, -10, 13)}${eye(40, -10, 13)}<path d="M-30 25 Q0 55 30 25" stroke="#2b2a33" stroke-width="7" fill="none" stroke-linecap="round"/></g>
+  <g id="o_title">${txt('', 640, 300, 'अग्गोबाई ढग्गोबाई', 96, '#ff6b35', 'stroke-width="12"')}${txt('', 640, 400, 'समाप्त', 64, '#3d7bff', 'stroke-width="10"')}</g>
+</g>`;
+
+// Shared rain layer + lyric bar (always on top)
+html += `<g id="rain" stroke="#dff3ff" stroke-width="4" stroke-linecap="round" opacity="0">${Array.from({length: 70}, (_, i) => `<line id="r${i}" x1="0" y1="0" x2="-8" y2="30"/>`).join('')}</g>
+<g id="lyr" opacity="0"><rect x="90" y="610" width="1100" height="88" rx="44" fill="#fff" opacity=".88"/>
+  <text id="lyrT" x="640" y="670" font-size="50" text-anchor="middle" font-family="'Baloo 2',sans-serif" font-weight="800"></text>
+  <circle id="ball" r="11" fill="#ff7a3d" stroke="#fff" stroke-width="3"/></g>`;
+svg.innerHTML = html;
+
+const SCENES = [[0, 's0'], [INTRO, 's1'], [INTRO + 8, 's2'], [INTRO + 16, 's3'], [INTRO + 24, 's4'], [INTRO + 32, 's5'], [INTRO + 40, 's6'], [OUTRO, 's7']];
+
+// ---------- Per-scene animation ----------
+function drawIntro(l) {
+  T('i_rays', `rotate(${l * 40})`);
+  T('i_c1', `translate(${200 + l * 30},150)`); T('i_c2', `translate(${640 + l * 20},110)`); T('i_c3', `translate(${-80 + l * 45},300)`);
+  T('i_title', `translate(640,330) scale(${back(l / 1.2)})`);
+  T('i_w1', `translate(-230,${-Math.abs(Math.sin(l * Math.PI * 2)) * 30})`);
+  T('i_w2', `translate(230,${-Math.abs(Math.sin(l * Math.PI * 2 + 1.5)) * 30})`);
+  S('i_sub', 'opacity', clamp((l - 1.2) / .5));
+}
+function drawHot(l) {
+  T('a_rays', `rotate(${l * 35})`);
+  T('a_sun', `scale(${1 + .06 * pulse(l)})`);
+  S('a_heat', 'stroke-dashoffset', l * 90);
+  const shake = (l > 2 ? 1 : .3) * Math.sin(l * 45) * 6;
+  T('a_cloud', `translate(${520 + shake},${330 + Math.sin(l * 2.5) * 12}) scale(${1 + .04 * pulse(l)},${1 - .04 * pulse(l)})`);
+  const heat = clamp(.3 + l / 6, 0, .95);
+  S('a_ch1', 'opacity', heat); S('a_ch2', 'opacity', heat);
+  S('a_mouth', 'ry', 18 + 8 * Math.abs(Math.sin(l * 6)));
+  for (let i = 0; i < 3; i++) {
+    const p = (l * 1.1 + i / 3) % 1;
+    T(`a_sw${i}`, `translate(${[-150, 140, 170][i]},${-20 + p * 150}) scale(1.6)`);
+    S(`a_sw${i}`, 'opacity', 1 - p);
+  }
+  T('a_bub', `translate(880,420) scale(${pop(l - 1.5) * (l < 7.6 ? 1 : 0)})`);
+}
+function drawRain(l) {
+  T('b_c1', `translate(${300 + Math.sin(l) * 30},110)`); T('b_c2', `translate(${980 - Math.sin(l) * 30},90)`);
+  const blink = (l % 3) < .15 ? .1 : 1;
+  T('b_eyes', `translate(0,335) scale(1,${blink}) translate(0,-335)`);
+  const flow = clamp((l - 2.5) / 2);
+  ['b_t1', 'b_t2'].forEach(id => { S(id, 'stroke-width', 3 + flow * 16); S(id, 'stroke-dashoffset', -l * 160); S(id, 'opacity', .3 + .7 * flow); });
+  for (let i = 0; i < 4; i++) { const p = (l * .8 + i / 4) % 1; S(`b_r${i}`, 'rx', 20 + p * 70); S(`b_r${i}`, 'ry', 5 + p * 14); S(`b_r${i}`, 'opacity', 1 - p); }
+  T('b_mtn', `translate(640,600) scale(${1 + .015 * Math.sin(l * 8)},1) translate(-640,-600)`);
+}
+function drawWind(l) {
+  for (let i = 0; i < 3; i++) {
+    const x = ((l * 260 + i * 520) % 1600) - 160;
+    T(`c_sw${i}`, `translate(${x},${[170, 330, 250][i]}) rotate(${-l * 400}) scale(${[1, .7, .85][i]})`);
+    T(`c_top${i}`, `rotate(${Math.sin(l * 5 + i) * 9},0,0)`);
+  }
+  const wind = l < 4;
+  S('c_blow', 'opacity', wind ? 1 : 0); S('c_smile', 'opacity', wind ? 0 : 1);
+  const thump = l >= 4 ? pulse(l) : 0;
+  T('c_cloud', `translate(${640 + (wind ? Math.sin(l * 4) * 30 : 0)},230) scale(${1 + (wind ? .08 * Math.abs(Math.sin(l * 3)) : .07 * thump)})`);
+  T('c_drum', `translate(640,${lerp(800, 470, back(clamp((l - 3.6) / .4)))})`);
+  T('c_st1', `translate(-60,0) rotate(${-30 + 25 * (1 - pulse(l))})`);
+  T('c_st2', `translate(60,0) rotate(${30 - 25 * (1 - pulse(l + BEAT / 2))})`);
+  [6, 6.5, 7].forEach((h, i) => T(`c_dhum${i}`, `translate(${[340, 940, 640][i]},${[480, 470, 400][i]}) rotate(${[-12, 10, 0][i]}) scale(${pop(l - h) * (l < 7.7 ? 1 : 0)})`));
+  T('c_soo', `translate(${330 + l * 30},120) scale(${wind ? pop(l - .5) : 0})`);
+}
+function drawNight(l) {
+  for (let i = 0; i < 26; i++) S(`d_star${i}`, 'opacity', .4 + .6 * Math.abs(Math.sin(l * 2 + i)));
+  T('d_lady', `translate(640,390) rotate(${Math.sin(l * Math.PI) * 4},0,150)`);
+  T('d_head', `rotate(${-6 + Math.sin(l * Math.PI * 2) * 4},0,-80)`);
+  T('d_arm', `rotate(${Math.sin(l * Math.PI * 2) * 10},35,-40)`);
+  const zap = l >= 4 || l < .6;
+  const b = Math.floor(l / BEAT) % 3, p = pulse(l);
+  for (let i = 0; i < 3; i++) S(`d_b${i}`, 'opacity', zap && i === b && p > .25 ? 1 : 0);
+  S('d_flash', 'opacity', zap ? .55 * p ** 3 : 0);
+  S('d_wand', 'stroke', p > .4 ? '#ffffff' : '#fff35c');
+  for (let i = 0; i < 6; i++) {
+    const a = l * 1.5 + i * Math.PI / 3, r = 230 + Math.sin(l * 3 + i) * 20;
+    T(`d_sp${i}`, `translate(${640 + Math.cos(a) * r},${330 + Math.sin(a) * r * .55}) rotate(${l * 90}) scale(${.6 + .6 * Math.abs(Math.sin(l * 4 + i))})`);
+  }
+  T('d_cham', `translate(1000,470) rotate(-8) scale(${l >= 4 ? pop(l - 4.2) * (1 + .1 * p) : 0})`);
+}
+function drawFrogs(l) {
+  const open = clamp((l - .4) / 1.4);
+  T('e_dl', `translate(-96,0) scale(${1 - open * .92},1)`);
+  T('e_dr', `translate(96,0) scale(${1 - open * .92},1)`);
+  for (let i = 0; i < 3; i++) { const p = (l * .7 + i / 3) % 1; T(`e_bb${i}`, `translate(${[-40, 10, 45][i] + Math.sin(p * 9) * 8},${60 - p * 140})`); S(`e_bb${i}`, 'opacity', open * (1 - p)); }
+  const tx = [260, 450, 840, 1020];
+  for (let i = 0; i < 4; i++) {
+    const st = 1.6 + i * .5, p = clamp((l - st) / .7);
+    const x = lerp(640, tx[i], p);
+    let y = lerp(560, 395, p) - Math.sin(p * Math.PI) * 200;
+    if (p >= 1) y -= Math.abs(Math.sin((l / BEAT + i * .5) * Math.PI)) * 22;
+    const talk = l > 4 && Math.floor(l / BEAT + i) % 2 === 0;
+    S(`e_f${i}`, 'opacity', l > st ? 1 : 0);
+    T(`e_f${i}`, `translate(${x},${y}) scale(${.9 + .1 * p})`);
+    S(`e_m${i}`, 'ry', talk ? 16 : 4);
+  }
+  const k = Math.floor(l / (BEAT * 2)) % 2, kp = l % (BEAT * 2);
+  T('e_tb0', `translate(330,300) scale(${l > 4 && k === 0 ? pop(kp) : 0})`);
+  T('e_tb1', `translate(930,300) scale(${l > 4 && k === 1 ? pop(kp) : 0})`);
+}
+function drawMud(l) {
+  document.querySelectorAll('#f_rain path').forEach((e, i) => e.setAttribute('stroke-dashoffset', 100 - 100 * clamp((l - i * .12) / 1.6)));
+  const mud = clamp((l - 1) / 5);
+  for (let k = 0; k < 2; k++) {
+    const ph = l / BEAT + k * .5, y = -Math.abs(Math.sin(ph * Math.PI)) * 90;
+    T(`f_k${k}`, `translate(${[520, 760][k]},${520 + y})`);
+    S(`f_arm${k}`, 'd', y < -50 ? 'M-34 0 L-80 -60 M34 0 L80 -60' : 'M-34 0 L-75 -20 M34 0 L75 -20');
+    S(`f_mud${k}`, 'opacity', mud);
+    const land = ((ph % 1) + 1) % 1;
+    for (let j = 0; j < 8; j++) {
+      const a = Math.PI * (.15 + .7 * j / 7), d = land * 130;
+      T(`f_sp${k * 8 + j}`, `translate(${[520, 760][k] - Math.cos(a) * d},${640 - Math.sin(a) * d + land * land * 120})`);
+      S(`f_sp${k * 8 + j}`, 'opacity', (1 - land) * clamp(l / .5));
+    }
+  }
+  T('f_soap', `translate(1110,300) rotate(${Math.sin(l * 6) * 6}) scale(${l > 4 ? pop(l - 4.1) : 0})`);
+  T('f_chik', `translate(220,300) rotate(-10) scale(${l > 1 ? pop(l - 1.2) * (1 + .08 * pulse(l)) : 0})`);
+  S('f_shine', 'opacity', .5 + .5 * Math.sin(l * 4));
+}
+function drawOutro(l) {
+  T('o_cloud', `translate(${640 + Math.sin(l * 2) * 200},${130 - Math.abs(Math.sin(l * Math.PI * 2)) * 25})`);
+  T('o_title', `translate(640,380) scale(${back(l)}) translate(-640,-380)`);
+}
+const DRAW = [drawIntro, drawHot, drawRain, drawWind, drawNight, drawFrogs, drawMud, drawOutro];
+
+function rainAmount(t) {
+  const sc = t - INTRO;
+  if (sc >= 8 && sc < 24) return 1;
+  if (sc >= 32 && sc < 40) return .45;
+  return 0;
+}
+
+// ---------- Lyrics with bouncing ball (word timing from song.js) ----------
+let curLine = -1, words = [];
+function drawLyrics(t) {
+  const i = Math.floor((t - INTRO) / LINE), on = i >= 0 && i < LINES.length;
+  S('lyr', 'opacity', on ? 1 : 0);
+  if (!on) return;
+  const ws = LINES[i].words;
+  if (i !== curLine) {
+    curLine = i;
+    $('lyrT').innerHTML = ws.map(w => `<tspan>${w[0]}</tspan>`).join(' ');
+    words = [...$('lyrT').querySelectorAll('tspan')];
+  }
+  const b = (t - INTRO - i * LINE) / BEAT;
+  let w = 0;
+  ws.forEach((x, j) => { if (b >= x[1]) w = j; });
+  words.forEach((e, j) => e.setAttribute('fill', j <= w ? '#ff5a1f' : '#3a3946'));
+  try {
+    const box = words[w].getBBox(), f = clamp((b - ws[w][1]) / Math.min(ws[w][2], 1.5));
+    T('ball', `translate(${box.x + box.width / 2},${box.y - 14 - Math.sin(f * Math.PI) * 26})`);
+  } catch (e) {}
+}
+
+// ---------- Master render ----------
+function render(t) {
+  SCENES.forEach(([st, id], k) => {
+    const end = k < SCENES.length - 1 ? SCENES[k + 1][0] + .5 : DUR + 1;
+    const vis = t >= st && t < end, g = $(id);
+    g.style.display = vis ? '' : 'none';
+    if (!vis) return;
+    g.setAttribute('opacity', k === 0 ? 1 : clamp((t - st) / .5));
+    DRAW[k](t - st);
+  });
+  const ra = rainAmount(t);
+  S('rain', 'opacity', ra * .8);
+  if (ra > 0) for (let i = 0; i < 70; i++) T(`r${i}`, `translate(${(i * 197) % 1340},${((t * 720 + i * 137) % 820) - 60})`);
+  drawLyrics(t);
+  $('prog').style.width = (clamp(t / DUR) * 100) + '%';
+  const s = Math.floor(clamp(t, 0, DUR)); $('time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// ---------- Music (Web Audio synth + AI vocal track) ----------
+const CH = {C: [[60, 64, 67], 36], F: [[60, 65, 69], 41], G: [[59, 62, 67], 43]};
+const hz = m => 440 * 2 ** ((m - 69) / 12);
+
+function scheduleMusic(ctx, t0, vocals) {
+  const out = ctx.createDynamicsCompressor(); out.connect(ctx.destination);
+  const master = ctx.createGain(); master.gain.value = .6; master.connect(out);
+  if (vocals) {
+    const v = ctx.createBufferSource(), g = ctx.createGain();
+    v.buffer = vocals; g.gain.value = 1.1; v.connect(g); g.connect(out); v.start(t0);
+  }
+  const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  { const d = noise.getChannelData(0); let s = 12345; for (let i = 0; i < d.length; i++) { s = (s * 16807) % 2147483647; d[i] = s / 1073741823.5 - 1; } }
+
+  function tone(t, dur, f, type, vol, attack = .01, rel = .15) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + attack);
+    g.gain.setTargetAtTime(vol * .6, t + attack, dur * .4);
+    g.gain.setTargetAtTime(0, t + dur, rel / 3);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + rel + .1);
+  }
+  // soft bell doubling the sung melody (louder when there is no vocal track)
+  const lead = (t, dur, m) => { tone(t, dur * .9, hz(m), 'triangle', vocals ? .07 : .22, .015, .12); tone(t, .25, hz(m + 12), 'sine', .05, .005, .2); };
+  function kick(t, f0 = 150, vol = .9) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(45, t + .18);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .35);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + .4);
+  }
+  let seed = 7;
+  function hiss(t, dur, vol, ftype, freq) {
+    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    s.buffer = noise; f.type = ftype; f.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+    seed = (seed * 9301 + 49297) % 233280;
+    s.connect(f); f.connect(g); g.connect(master); s.start(t, (seed / 233280) * .3); s.stop(t + dur + .05);
+  }
+  const snare = t => { hiss(t, .18, .3, 'highpass', 1500); tone(t, .06, 190, 'triangle', .12, .002, .05); };
+  const hat = (t, v) => hiss(t, .05, v, 'highpass', 7000);
+  const croak = t => { const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(110, t); o.frequency.linearRampToValueAtTime(70, t + .2);
+    f.type = 'lowpass'; f.frequency.value = 600; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.25, t + .02); g.gain.exponentialRampToValueAtTime(.001, t + .25);
+    o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + .3); };
+
+  function bar(t, chord, drums = true) {
+    const [notes, root] = CH[chord];
+    notes.forEach(n => tone(t, BEAT * 4 * .95, hz(n - 12), 'sine', .04, .08, .3));
+    [[0, 0], [1.5, 0], [2, 7], [3, 0]].forEach(([b, iv]) => tone(t + b * BEAT, BEAT * .8, hz(root + iv), 'triangle', .2, .01, .08));
+    // ukulele-style strum on the off-beats
+    [.5, 1.5, 2.5, 3.5].forEach(b => notes.forEach((n, k) => tone(t + b * BEAT + k * .012, .12, hz(n + 12), 'square', .016, .003, .06)));
+    if (!drums) return;
+    for (let b = 0; b < 4; b++) {
+      (b % 2 ? snare : kick)(t + b * BEAT);
+      hat(t + b * BEAT, .05); hat(t + (b + .5) * BEAT, .035);
+    }
+  }
+
+  // intro: one light bar, then drums with a rising sparkle
+  bar(t0, 'C', false); bar(t0 + 4 * BEAT, 'G');
+  [60, 64, 67, 72, 76, 79, 84].forEach((m, i) => tone(t0 + 4 * BEAT + i * BEAT / 2, .3, hz(m), 'sine', .07, .005, .2));
+
+  LINES.forEach((line, i) => {
+    const t = t0 + INTRO + i * LINE;
+    bar(t, line.chords[0]); bar(t + 4 * BEAT, line.chords[1]);
+    line.words.forEach(([, b, d, notes]) => notes.forEach((m, k) => lead(t + (b + d * k / notes.length) * BEAT, d / notes.length * BEAT, m)));
+    if (i === 4) for (let k = 0; k < 8; k++) hiss(t + k * BEAT, .6, .05, 'bandpass', 600 + 300 * Math.sin(k));   // whoosh
+    if (i === 5) [4, 5, 6].forEach(b => kick(t + b * BEAT, 110, 1));                                              // ढुम ढुम ढुम
+    if (i === 6) hiss(t, 2.2, .45, 'lowpass', 300);                                                                // thunder
+    if (i === 7) for (let k = 0; k < 8; k++) tone(t + k * BEAT, .2, hz([84, 88, 91, 96][k % 4]), 'sine', .05, .003, .2);  // चमचम
+    if (i === 8 || i === 9) [1.5, 3.5, 5.5, 7.5].forEach(b => croak(t + b * BEAT));
+    if (i === 11) [0, 2, 4, 6].forEach(b => hiss(t + b * BEAT + .25, .25, .12, 'lowpass', 900));                // splash
+  });
+
+  // outro: happy tag then a ringing chord
+  const to = t0 + OUTRO;
+  bar(to, 'F'); bar(to + 4 * BEAT, 'G');
+  [[0, 72], [.5, 74], [1, 76], [2, 79], [3, 76], [4, 74], [5, 72], [6, 74], [7, 76]].forEach(([b, m]) => lead(to + b * BEAT, BEAT, m));
+  kick(to + 8 * BEAT); [60, 64, 67, 72, 76].forEach(m => tone(to + 8 * BEAT, 1.8, hz(m), 'triangle', .08, .01, .8));
+}
+
+// vocals.mp3 is made by tools/voice/sing.py; the song still plays (bell melody only) without it
+let vocalBytes = null;
+const vocalsReady = fetch('vocals.mp3').then(r => r.ok ? r.arrayBuffer() : null).then(b => (vocalBytes = b)).catch(() => null);
+const decodeVocals = async c => { await vocalsReady; return vocalBytes ? c.decodeAudioData(vocalBytes.slice(0)) : null; };
+
+// ---------- Playback ----------
+let ctx = null, t0 = 0, raf = 0;
+async function start() {
+  if (ctx) ctx.close();
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const vocals = await decodeVocals(ctx);
+  t0 = ctx.currentTime + .15;
+  scheduleMusic(ctx, t0, vocals);
+  $('play').style.display = 'none';
+  cancelAnimationFrame(raf);
+  const loop = () => {
+    const t = ctx.currentTime - t0;
+    render(Math.max(0, t));
+    if (t < DUR) raf = requestAnimationFrame(loop);
+  };
+  loop();
+}
+$('play').onclick = start;
+$('replay').onclick = start;
+
+// ---------- Hooks for tools/render-video.mjs ----------
+window.__DUR = DUR;
+window.__render = render;
+window.__wav = async () => {
+  const rate = 44100, off = new OfflineAudioContext(2, Math.ceil(rate * DUR), rate);
+  scheduleMusic(off, 0, await decodeVocals(off));
+  const buf = await off.startRendering(), n = buf.length, L = buf.getChannelData(0), R = buf.getChannelData(1);
+  const ab = new ArrayBuffer(44 + n * 4), v = new DataView(ab), w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 4, true);
+  for (let i = 0; i < n; i++) { v.setInt16(44 + i * 4, clamp(L[i], -1, 1) * 32767, true); v.setInt16(46 + i * 4, clamp(R[i], -1, 1) * 32767, true); }
+  const bytes = new Uint8Array(ab); let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+
+const params = new URLSearchParams(location.search);
+if (params.has('capture')) document.body.classList.add('capture');
+render(+params.get('t') || 0);
+document.fonts.ready.then(() => { curLine = -1; render(+params.get('t') || 0); });
+</script>
+</body>
+</html>

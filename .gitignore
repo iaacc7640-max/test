@@ -1,0 +1,3 @@
+tools/voice/.venv/
+tools/voice/vocals.wav
+__pycache__/
