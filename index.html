@@ -21,7 +21,7 @@ svg{width:100%;height:100%;display:block}
 .play span{background:#ff7a3d;color:#fff;font-size:clamp(18px,3.5vw,32px);font-weight:800;padding:.5em 1.2em;border-radius:999px;box-shadow:0 6px 0 #c4501e}
 .controls{display:flex;gap:10px;align-items:center;margin-top:14px;width:100%;max-width:1100px}
 .controls button{font:inherit;font-weight:700;border:0;border-radius:999px;padding:6px 16px;background:var(--accent);color:#fff;cursor:pointer}
-.bar{flex:1;height:8px;border-radius:4px;background:var(--panel);overflow:hidden;box-shadow:inset 0 0 0 1px var(--shadow)}
+.bar{flex:1;cursor:pointer;height:8px;border-radius:4px;background:var(--panel);overflow:hidden;box-shadow:inset 0 0 0 1px var(--shadow)}
 .bar i{display:block;height:100%;width:0;background:var(--accent)}
 .time{font-variant-numeric:tabular-nums;color:var(--muted);min-width:4.5em;text-align:right}
 body.capture{padding:0;background:#000}
@@ -38,21 +38,23 @@ body.capture .stage{width:1280px;height:720px;max-width:none;border-radius:0;box
 </div>
 <div class="controls">
   <button id="replay">↺ पुन्हा</button>
-  <div class="bar"><i id="prog"></i></div>
+  <div class="bar" id="bar"><i id="prog"></i></div>
   <span class="time" id="time">0:00</span>
 </div>
+<audio id="song" src="song.mp3" preload="auto"></audio>
 <script src="song.js"></script>
 <script>
-// ---------- Timeline ----------
-const BEAT = 60 / SONG.bpm, LINE = 8 * BEAT, INTRO = SONG.intro_beats * BEAT;
-const LINES = SONG.lines;
-const OUTRO = INTRO + LINES.length * LINE;   // 52
-const DUR = OUTRO + 6;                        // 58
+// ---------- Timeline (all times come from song.js, measured from song.mp3) ----------
+const BEAT = SONG.beat, DUR = SONG.duration;
+const onBeat = t => SONG.offset + Math.round((t - SONG.offset) / BEAT) * BEAT;
+// scene starts snapped to the beat grid so local-time pulses land on the beat
+const SCENE_AT = SONG.scenes.map(([k, st], i) => [k, i ? onBeat(st) : 0]);
 
 // ---------- Small helpers ----------
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 const lerp = (a, b, p) => a + (b - a) * p;
 const pulse = t => Math.exp(-(((t / BEAT) % 1 + 1) % 1) * 5);
+const cyc = (l, n = 8) => l % (n * BEAT);   // loop a scene's action every n beats
 const back = p => { p = clamp(p); const c = 1.7; return 1 + (c + 1) * (p - 1) ** 3 + c * (p - 1) ** 2; };
 const pop = (x, len = .3) => x < 0 ? 0 : back(x / len);
 const $ = id => document.getElementById(id);
@@ -231,8 +233,6 @@ html += `<g id="rain" stroke="#dff3ff" stroke-width="4" stroke-linecap="round" o
   <circle id="ball" r="11" fill="#ff7a3d" stroke="#fff" stroke-width="3"/></g>`;
 svg.innerHTML = html;
 
-const SCENES = [[0, 's0'], [INTRO, 's1'], [INTRO + 8, 's2'], [INTRO + 16, 's3'], [INTRO + 24, 's4'], [INTRO + 32, 's5'], [INTRO + 40, 's6'], [OUTRO, 's7']];
-
 // ---------- Per-scene animation ----------
 function drawIntro(l) {
   T('i_rays', `rotate(${l * 40})`);
@@ -256,7 +256,8 @@ function drawHot(l) {
     T(`a_sw${i}`, `translate(${[-150, 140, 170][i]},${-20 + p * 150}) scale(1.6)`);
     S(`a_sw${i}`, 'opacity', 1 - p);
   }
-  T('a_bub', `translate(880,420) scale(${pop(l - 1.5) * (l < 7.6 ? 1 : 0)})`);
+  const lc = cyc(l, 10);
+  T('a_bub', `translate(880,420) scale(${pop(lc - 1.5) * (lc < 10 * BEAT - .4 ? 1 : 0)})`);
 }
 function drawRain(l) {
   T('b_c1', `translate(${300 + Math.sin(l) * 30},110)`); T('b_c2', `translate(${980 - Math.sin(l) * 30},90)`);
@@ -273,22 +274,25 @@ function drawWind(l) {
     T(`c_sw${i}`, `translate(${x},${[170, 330, 250][i]}) rotate(${-l * 400}) scale(${[1, .7, .85][i]})`);
     T(`c_top${i}`, `rotate(${Math.sin(l * 5 + i) * 9},0,0)`);
   }
-  const wind = l < 4;
+  // 8 beats of wind, then 8 beats of drumming, repeating
+  const lc = cyc(l, 16), half = 8 * BEAT, wind = lc < half;
   S('c_blow', 'opacity', wind ? 1 : 0); S('c_smile', 'opacity', wind ? 0 : 1);
-  const thump = l >= 4 ? pulse(l) : 0;
-  T('c_cloud', `translate(${640 + (wind ? Math.sin(l * 4) * 30 : 0)},230) scale(${1 + (wind ? .08 * Math.abs(Math.sin(l * 3)) : .07 * thump)})`);
-  T('c_drum', `translate(640,${lerp(800, 470, back(clamp((l - 3.6) / .4)))})`);
+  const thump = wind ? 0 : pulse(l);
+  T('c_cloud', `translate(${640 + (wind ? Math.sin(l * 3) * 30 : 0)},230) scale(${1 + (wind ? .08 * Math.abs(Math.sin(l * 2.5)) : .07 * thump)})`);
+  const dIn = wind ? (l > half ? clamp(1 - lc / .4) : 0) : clamp((lc - half + .2) / .4);
+  T('c_drum', `translate(640,${lerp(900, 470, back(dIn))})`);
   T('c_st1', `translate(-60,0) rotate(${-30 + 25 * (1 - pulse(l))})`);
   T('c_st2', `translate(60,0) rotate(${30 - 25 * (1 - pulse(l + BEAT / 2))})`);
-  [6, 6.5, 7].forEach((h, i) => T(`c_dhum${i}`, `translate(${[340, 940, 640][i]},${[480, 470, 400][i]}) rotate(${[-12, 10, 0][i]}) scale(${pop(l - h) * (l < 7.7 ? 1 : 0)})`));
-  T('c_soo', `translate(${330 + l * 30},120) scale(${wind ? pop(l - .5) : 0})`);
+  const bi = Math.floor(l / BEAT) % 3;
+  [0, 1, 2].forEach(i => T(`c_dhum${i}`, `translate(${[340, 940, 640][i]},${[480, 470, 400][i]}) rotate(${[-12, 10, 0][i]}) scale(${!wind && bi === i ? pop(l % BEAT) : 0})`));
+  T('c_soo', `translate(${330 + (lc % half) * 30},120) scale(${wind ? pop(lc - .5) : 0})`);
 }
 function drawNight(l) {
   for (let i = 0; i < 26; i++) S(`d_star${i}`, 'opacity', .4 + .6 * Math.abs(Math.sin(l * 2 + i)));
   T('d_lady', `translate(640,390) rotate(${Math.sin(l * Math.PI) * 4},0,150)`);
   T('d_head', `rotate(${-6 + Math.sin(l * Math.PI * 2) * 4},0,-80)`);
   T('d_arm', `rotate(${Math.sin(l * Math.PI * 2) * 10},35,-40)`);
-  const zap = l >= 4 || l < .6;
+  const lc = cyc(l, 8), zap = lc >= 4 * BEAT || l < .6;
   const b = Math.floor(l / BEAT) % 3, p = pulse(l);
   for (let i = 0; i < 3; i++) S(`d_b${i}`, 'opacity', zap && i === b && p > .25 ? 1 : 0);
   S('d_flash', 'opacity', zap ? .55 * p ** 3 : 0);
@@ -297,7 +301,7 @@ function drawNight(l) {
     const a = l * 1.5 + i * Math.PI / 3, r = 230 + Math.sin(l * 3 + i) * 20;
     T(`d_sp${i}`, `translate(${640 + Math.cos(a) * r},${330 + Math.sin(a) * r * .55}) rotate(${l * 90}) scale(${.6 + .6 * Math.abs(Math.sin(l * 4 + i))})`);
   }
-  T('d_cham', `translate(1000,470) rotate(-8) scale(${l >= 4 ? pop(l - 4.2) * (1 + .1 * p) : 0})`);
+  T('d_cham', `translate(1000,470) rotate(-8) scale(${lc >= 4 * BEAT ? pop(lc - 4 * BEAT - .2) * (1 + .1 * p) : 0})`);
 }
 function drawFrogs(l) {
   const open = clamp((l - .4) / 1.4);
@@ -343,47 +347,50 @@ function drawOutro(l) {
   T('o_title', `translate(640,380) scale(${back(l)}) translate(-640,-380)`);
 }
 const DRAW = [drawIntro, drawHot, drawRain, drawWind, drawNight, drawFrogs, drawMud, drawOutro];
+const RAIN = [0, 0, 1, 1, 0, .45, 0, 0];   // rain strength per scene
 
-function rainAmount(t) {
-  const sc = t - INTRO;
-  if (sc >= 8 && sc < 24) return 1;
-  if (sc >= 32 && sc < 40) return .45;
-  return 0;
-}
-
-// ---------- Lyrics with bouncing ball (word timing from song.js) ----------
-let curLine = -1, words = [];
+// ---------- Lyrics with bouncing ball ----------
+// SONG.sung = [lyric index, start, end]; words are spread across the line by length
+let curLine = -1, words = [], wordAt = [];
 function drawLyrics(t) {
-  const i = Math.floor((t - INTRO) / LINE), on = i >= 0 && i < LINES.length;
-  S('lyr', 'opacity', on ? 1 : 0);
-  if (!on) return;
-  const ws = LINES[i].words;
-  if (i !== curLine) {
-    curLine = i;
-    $('lyrT').innerHTML = ws.map(w => `<tspan>${w[0]}</tspan>`).join(' ');
+  const n = SONG.sung.findIndex(([, s, e]) => t >= s - .25 && t < e + .35);
+  S('lyr', 'opacity', n < 0 ? 0 : 1);
+  if (n < 0) return;
+  const [li, s, e] = SONG.sung[n];
+  if (n !== curLine) {
+    curLine = n;
+    const ws = SONG.lyrics[li].split(' ');
+    $('lyrT').innerHTML = ws.map(w => `<tspan>${w}</tspan>`).join(' ');
     words = [...$('lyrT').querySelectorAll('tspan')];
+    const total = ws.reduce((a, w) => a + w.length + 2, 0);
+    let acc = 0;
+    wordAt = ws.map(w => { const at = s + (e - s) * acc / total; acc += w.length + 2; return at; });
   }
-  const b = (t - INTRO - i * LINE) / BEAT;
   let w = 0;
-  ws.forEach((x, j) => { if (b >= x[1]) w = j; });
-  words.forEach((e, j) => e.setAttribute('fill', j <= w ? '#ff5a1f' : '#3a3946'));
+  wordAt.forEach((at, j) => { if (t >= at) w = j; });
+  words.forEach((el, j) => el.setAttribute('fill', t >= s && j <= w ? '#ff5a1f' : '#3a3946'));
   try {
-    const box = words[w].getBBox(), f = clamp((b - ws[w][1]) / Math.min(ws[w][2], 1.5));
+    const box = words[w].getBBox(), next = wordAt[w + 1] ?? e, f = clamp((t - wordAt[w]) / (next - wordAt[w]));
     T('ball', `translate(${box.x + box.width / 2},${box.y - 14 - Math.sin(f * Math.PI) * 26})`);
-  } catch (e) {}
+  } catch (err) {}
 }
 
 // ---------- Master render ----------
 function render(t) {
-  SCENES.forEach(([st, id], k) => {
-    const end = k < SCENES.length - 1 ? SCENES[k + 1][0] + .5 : DUR + 1;
-    const vis = t >= st && t < end, g = $(id);
-    g.style.display = vis ? '' : 'none';
-    if (!vis) return;
-    g.setAttribute('opacity', k === 0 ? 1 : clamp((t - st) / .5));
+  let rain = 0;
+  ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7'].forEach(id => ($(id).style.display = 'none'));
+  SCENE_AT.forEach(([k, st], i) => {
+    const end = i < SCENE_AT.length - 1 ? SCENE_AT[i + 1][1] + .5 : DUR + 1;
+    if (t < st || t >= end) return;
+    const g = $(`s${k}`);
+    g.style.display = '';
+    svg.appendChild(g);                          // later scene paints on top while fading in
+    g.setAttribute('opacity', i === 0 ? 1 : clamp((t - st) / .5));
     DRAW[k](t - st);
+    rain = RAIN[k] * (i === 0 ? 1 : clamp((t - st) / .5));
   });
-  const ra = rainAmount(t);
+  svg.appendChild($('rain')); svg.appendChild($('lyr'));
+  const ra = rain;
   S('rain', 'opacity', ra * .8);
   if (ra > 0) for (let i = 0; i < 70; i++) T(`r${i}`, `translate(${(i * 197) % 1340},${((t * 720 + i * 137) % 820) - 60})`);
   drawLyrics(t);
@@ -391,127 +398,19 @@ function render(t) {
   const s = Math.floor(clamp(t, 0, DUR)); $('time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-// ---------- Music (Web Audio synth + AI vocal track) ----------
-const CH = {C: [[60, 64, 67], 36], F: [[60, 65, 69], 41], G: [[59, 62, 67], 43]};
-const hz = m => 440 * 2 ** ((m - 69) / 12);
-
-function scheduleMusic(ctx, t0, vocals) {
-  const out = ctx.createDynamicsCompressor(); out.connect(ctx.destination);
-  const master = ctx.createGain(); master.gain.value = .6; master.connect(out);
-  if (vocals) {
-    const v = ctx.createBufferSource(), g = ctx.createGain();
-    v.buffer = vocals; g.gain.value = 1.1; v.connect(g); g.connect(out); v.start(t0);
-  }
-  const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-  { const d = noise.getChannelData(0); let s = 12345; for (let i = 0; i < d.length; i++) { s = (s * 16807) % 2147483647; d[i] = s / 1073741823.5 - 1; } }
-
-  function tone(t, dur, f, type, vol, attack = .01, rel = .15) {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type; o.frequency.value = f;
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + attack);
-    g.gain.setTargetAtTime(vol * .6, t + attack, dur * .4);
-    g.gain.setTargetAtTime(0, t + dur, rel / 3);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + rel + .1);
-  }
-  // soft bell doubling the sung melody (louder when there is no vocal track)
-  const lead = (t, dur, m) => { tone(t, dur * .9, hz(m), 'triangle', vocals ? .07 : .22, .015, .12); tone(t, .25, hz(m + 12), 'sine', .05, .005, .2); };
-  function kick(t, f0 = 150, vol = .9) {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(45, t + .18);
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .35);
-    o.connect(g); g.connect(master); o.start(t); o.stop(t + .4);
-  }
-  let seed = 7;
-  function hiss(t, dur, vol, ftype, freq) {
-    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
-    s.buffer = noise; f.type = ftype; f.frequency.value = freq;
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
-    seed = (seed * 9301 + 49297) % 233280;
-    s.connect(f); f.connect(g); g.connect(master); s.start(t, (seed / 233280) * .3); s.stop(t + dur + .05);
-  }
-  const snare = t => { hiss(t, .18, .3, 'highpass', 1500); tone(t, .06, 190, 'triangle', .12, .002, .05); };
-  const hat = (t, v) => hiss(t, .05, v, 'highpass', 7000);
-  const croak = t => { const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
-    o.type = 'sawtooth'; o.frequency.setValueAtTime(110, t); o.frequency.linearRampToValueAtTime(70, t + .2);
-    f.type = 'lowpass'; f.frequency.value = 600; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.25, t + .02); g.gain.exponentialRampToValueAtTime(.001, t + .25);
-    o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + .3); };
-
-  function bar(t, chord, drums = true) {
-    const [notes, root] = CH[chord];
-    notes.forEach(n => tone(t, BEAT * 4 * .95, hz(n - 12), 'sine', .04, .08, .3));
-    [[0, 0], [1.5, 0], [2, 7], [3, 0]].forEach(([b, iv]) => tone(t + b * BEAT, BEAT * .8, hz(root + iv), 'triangle', .2, .01, .08));
-    // ukulele-style strum on the off-beats
-    [.5, 1.5, 2.5, 3.5].forEach(b => notes.forEach((n, k) => tone(t + b * BEAT + k * .012, .12, hz(n + 12), 'square', .016, .003, .06)));
-    if (!drums) return;
-    for (let b = 0; b < 4; b++) {
-      (b % 2 ? snare : kick)(t + b * BEAT);
-      hat(t + b * BEAT, .05); hat(t + (b + .5) * BEAT, .035);
-    }
-  }
-
-  // intro: one light bar, then drums with a rising sparkle
-  bar(t0, 'C', false); bar(t0 + 4 * BEAT, 'G');
-  [60, 64, 67, 72, 76, 79, 84].forEach((m, i) => tone(t0 + 4 * BEAT + i * BEAT / 2, .3, hz(m), 'sine', .07, .005, .2));
-
-  LINES.forEach((line, i) => {
-    const t = t0 + INTRO + i * LINE;
-    bar(t, line.chords[0]); bar(t + 4 * BEAT, line.chords[1]);
-    line.words.forEach(([, b, d, notes]) => notes.forEach((m, k) => lead(t + (b + d * k / notes.length) * BEAT, d / notes.length * BEAT, m)));
-    if (i === 4) for (let k = 0; k < 8; k++) hiss(t + k * BEAT, .6, .05, 'bandpass', 600 + 300 * Math.sin(k));   // whoosh
-    if (i === 5) [4, 5, 6].forEach(b => kick(t + b * BEAT, 110, 1));                                              // ढुम ढुम ढुम
-    if (i === 6) hiss(t, 2.2, .45, 'lowpass', 300);                                                                // thunder
-    if (i === 7) for (let k = 0; k < 8; k++) tone(t + k * BEAT, .2, hz([84, 88, 91, 96][k % 4]), 'sine', .05, .003, .2);  // चमचम
-    if (i === 8 || i === 9) [1.5, 3.5, 5.5, 7.5].forEach(b => croak(t + b * BEAT));
-    if (i === 11) [0, 2, 4, 6].forEach(b => hiss(t + b * BEAT + .25, .25, .12, 'lowpass', 900));                // splash
-  });
-
-  // outro: happy tag then a ringing chord
-  const to = t0 + OUTRO;
-  bar(to, 'F'); bar(to + 4 * BEAT, 'G');
-  [[0, 72], [.5, 74], [1, 76], [2, 79], [3, 76], [4, 74], [5, 72], [6, 74], [7, 76]].forEach(([b, m]) => lead(to + b * BEAT, BEAT, m));
-  kick(to + 8 * BEAT); [60, 64, 67, 72, 76].forEach(m => tone(to + 8 * BEAT, 1.8, hz(m), 'triangle', .08, .01, .8));
-}
-
-// vocals.mp3 is made by tools/voice/sing.py; the song still plays (bell melody only) without it
-let vocalBytes = null;
-const vocalsReady = fetch('vocals.mp3').then(r => r.ok ? r.arrayBuffer() : null).then(b => (vocalBytes = b)).catch(() => null);
-const decodeVocals = async c => { await vocalsReady; return vocalBytes ? c.decodeAudioData(vocalBytes.slice(0)) : null; };
-
-// ---------- Playback ----------
-let ctx = null, t0 = 0, raf = 0;
-async function start() {
-  if (ctx) ctx.close();
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const vocals = await decodeVocals(ctx);
-  t0 = ctx.currentTime + .15;
-  scheduleMusic(ctx, t0, vocals);
-  $('play').style.display = 'none';
-  cancelAnimationFrame(raf);
-  const loop = () => {
-    const t = ctx.currentTime - t0;
-    render(Math.max(0, t));
-    if (t < DUR) raf = requestAnimationFrame(loop);
-  };
-  loop();
-}
-$('play').onclick = start;
-$('replay').onclick = start;
+// ---------- Playback: the page follows song.mp3 ----------
+const audio = $('song');
+let raf = 0;
+const loop = () => { render(audio.currentTime); if (!audio.paused) raf = requestAnimationFrame(loop); };
+audio.addEventListener('play', () => { $('play').style.display = 'none'; cancelAnimationFrame(raf); loop(); });
+audio.addEventListener('seeked', () => render(audio.currentTime));
+$('play').onclick = () => audio.play();
+$('replay').onclick = () => { audio.currentTime = 0; audio.play(); };
+$('bar').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); audio.currentTime = clamp((e.clientX - r.left) / r.width) * DUR; };
 
 // ---------- Hooks for tools/render-video.mjs ----------
 window.__DUR = DUR;
 window.__render = render;
-window.__wav = async () => {
-  const rate = 44100, off = new OfflineAudioContext(2, Math.ceil(rate * DUR), rate);
-  scheduleMusic(off, 0, await decodeVocals(off));
-  const buf = await off.startRendering(), n = buf.length, L = buf.getChannelData(0), R = buf.getChannelData(1);
-  const ab = new ArrayBuffer(44 + n * 4), v = new DataView(ab), w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-  w(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 4, true);
-  for (let i = 0; i < n; i++) { v.setInt16(44 + i * 4, clamp(L[i], -1, 1) * 32767, true); v.setInt16(46 + i * 4, clamp(R[i], -1, 1) * 32767, true); }
-  const bytes = new Uint8Array(ab); let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-};
 
 const params = new URLSearchParams(location.search);
 if (params.has('capture')) document.body.classList.add('capture');

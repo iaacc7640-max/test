@@ -1,11 +1,8 @@
-// Renders index.html to aggobai-dhaggobai.mp4 (1280x720, 30 fps, with music + vocals).
+// Renders index.html to aggobai-dhaggobai.mp4 (1280x720, 30 fps) with song.mp3 as the soundtrack.
 // Run from the repo root:  node tools/render-video.mjs
 // Needs Playwright with Chromium, ffmpeg and python3 (for a throwaway local web server).
 import { spawn } from 'node:child_process';
-import { writeFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const FPS = 30, PORT = 8765, OUT = 'aggobai-dhaggobai.mp4';
@@ -20,10 +17,7 @@ try {
   await page.evaluate(() => document.fonts.ready);
   const dur = await page.evaluate(() => window.__DUR);
 
-  const wav = join(tmpdir(), 'aggobai-audio.wav');
-  writeFileSync(wav, Buffer.from(await page.evaluate(() => window.__wav()), 'base64'));
-
-  const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-', '-i', wav,
+  const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-', '-i', 'song.mp3',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '22', '-preset', 'medium', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', OUT],
     { stdio: ['pipe', 'inherit', 'inherit'] });
   const frames = Math.round(dur * FPS);
@@ -35,7 +29,6 @@ try {
   }
   ff.stdin.end();
   await new Promise((res, rej) => ff.on('close', c => (c ? rej(new Error(`ffmpeg exited ${c}`)) : res())));
-  rmSync(wav);
   console.log('wrote', OUT);
 } finally {
   await browser.close();
